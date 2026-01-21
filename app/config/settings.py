@@ -1,3 +1,4 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -11,6 +12,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
     SUPABASE_STORAGE_BUCKET: str
+    
+    # Default to 'data' in the current working directory
+    DATA_DIR: Path = Path("data")
 
 # Singleton instance
 settings = Settings()

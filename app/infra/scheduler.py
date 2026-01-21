@@ -9,11 +9,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.infra.supabase_client import list_files, download_file
 from app.domain.document_service import DocumentService
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# State file path
-STATE_FILE = Path("app/data/state/processed_files.json")
+# State file path using configurable DATA_DIR
+STATE_FILE = settings.DATA_DIR / "state" / "processed_files.json"
 
 def load_processed_files() -> List[str]:
     if not STATE_FILE.exists():
@@ -55,25 +56,19 @@ def process_new_documents_job():
                 logger.info(f"Processing file: {filename}")
                 file_bytes = download_file(filename)
                 
-                # Check if file_bytes is empty or invalid if needed, but service handles standard bytes
                 document_service.process_document(file_bytes, filename)
                 
                 processed_files.append(filename)
-                # Save state incrementally or after batch? 
-                # Incrementally is safer against crashes.
                 save_processed_files(processed_files)
                 
             except Exception as e:
                 logger.error(f"Failed to process file {filename}: {e}")
-                # Continue processing other files
                 
     except Exception as e:
         logger.error(f"Job execution failed: {e}")
 
 scheduler = BackgroundScheduler()
 
-# Add job
-# Daily at 10:00 AM America/Sao_Paulo
 trigger = CronTrigger(
     hour=10, 
     minute=0, 

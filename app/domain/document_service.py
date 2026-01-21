@@ -1,51 +1,54 @@
 import json
 import uuid
 import logging
-from pathlib import Path
+import time
 from io import BytesIO
 from docling.document_converter import DocumentConverter, DocumentStream
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class DocumentService:
     def __init__(self):
-        # Initialize DocumentConverter here if it's expensive, or per call.
-        # Usually it's better to reuse it if it loads models.
         self.converter = DocumentConverter()
-        self.processed_dir = Path("app/data/processed")
+        self.processed_dir = settings.DATA_DIR / "processed"
         self.processed_dir.mkdir(parents=True, exist_ok=True)
 
     def process_document(self, file_bytes: bytes, filename: str) -> dict:
-        """
-        Receives file bytes, processes with Docling, saves JSON, and returns metadata.
-        """
         doc_uuid = str(uuid.uuid4())
+        start = time.time()
         
-        # Docling expects a file path or stream. We have bytes.
-        # DocumentStream allows passing bytes directly with a name.
-        buf = BytesIO(file_bytes)
-        source = DocumentStream(name=filename, stream=buf)
-        
+        # Docling processing
         try:
-            # Convert
-            result = self.converter.convert(source)
+            buf = BytesIO(file_bytes)
+            source = DocumentStream(name=filename, stream=buf)
             
-            # Export to JSON
-            # result.document is the DoclingDocument
-            json_output = result.document.export_to_dict()
+            # Conversion
+            conv_result = self.converter.convert(source)
+            conv_time = time.time() - start
             
-            # Save to disk
+            # Export & Save
+            json_output = conv_result.document.export_to_dict()
             json_path = self.processed_dir / f"{doc_uuid}.json"
+            
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(json_output, f, ensure_ascii=False, indent=2)
+            
+            total_time = time.time() - start
+            
+            # Compact log line
+            logger.info(f"Processed '{filename}' ({len(file_bytes)}b) -> '{doc_uuid}.json' in {total_time:.2f}s (Conv: {conv_time:.2f}s)")
             
             return {
                 "document_id": doc_uuid,
                 "filename": filename,
                 "json_path": str(json_path),
-                "status": "processed"
+                "status": "processed",
+                "timing": {
+                    "conversion_sec": round(conv_time, 2),
+                    "total_sec": round(total_time, 2)
+                }
             }
-            
         except Exception as e:
-            logger.error(f"Error processing document {filename}: {e}")
+            logger.error(f"Error processing '{filename}': {e}")
             raise e
