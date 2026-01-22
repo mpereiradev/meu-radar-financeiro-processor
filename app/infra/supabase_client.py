@@ -16,24 +16,13 @@ def list_files(prefix: str | None = None) -> list[str]:
     client = SupabaseClientWrapper.get_client()
     bucket = settings.SUPABASE_STORAGE_BUCKET
     
-    # 'list' method usually takes a path/prefix. If prefix is None, we might want root.
-    # Supabase-py storage list signature: storage.from_(bucket).list(path, "options")
-    # path defaults to root if logic suggests so.
-    
     path = prefix if prefix else ""
     
-    # storage.from_ returns a StorageFileApi
-    # list returns a list of dictionaries (metadata)
     response = client.storage.from_(bucket).list(path)
     
     if not isinstance(response, list):
-         # Handle potential unexpected response types if library changes, though usually it's list of dicts.
-         return []
+        return []
 
-    # Filter out folders if necessary or just return names. 
-    # Usually we want full paths relative to bucket or just names. 
-    # Request says "list files", so returning names. 
-    # If prefix was used, result names are relative to prefix.
     return [item['name'] for item in response if 'name' in item]
 
 def download_file(path: str) -> bytes:
@@ -43,5 +32,33 @@ def download_file(path: str) -> bytes:
     response = client.storage.from_(bucket).download(path)
     return response
 
-# Initialize on module load if preferred, or keep lazy.
-# The request asked for "singleton client". The wrapper above handles it lazily.
+def upload_file(bucket: str, path: str, data: bytes | str, content_type: str = "application/json") -> None:
+    client = SupabaseClientWrapper.get_client()
+    client.storage.from_(bucket).upload(path, data, {"content-type": content_type})
+
+def delete_file(bucket: str, path: str) -> None:
+    client = SupabaseClientWrapper.get_client()
+    client.storage.from_(bucket).remove([path])
+
+def move_file(source_bucket: str, source_path: str, dest_bucket: str, dest_path: str) -> None:
+    """
+    Moves a file from one bucket to another by downloading and re-uploading,
+    then deleting the original.
+    """
+    client = SupabaseClientWrapper.get_client()
+    
+    # 1. Download
+    file_bytes = client.storage.from_(source_bucket).download(source_path)
+    
+    # 2. Upload to destination
+    # Determine content type (heuristic or default)
+    content_type = "application/octet-stream"
+    if source_path.endswith(".json"):
+        content_type = "application/json"
+    elif source_path.endswith(".pdf"):
+        content_type = "application/pdf"
+        
+    client.storage.from_(dest_bucket).upload(dest_path, file_bytes, {"content-type": content_type})
+    
+    # 3. Delete original
+    client.storage.from_(source_bucket).remove([source_path])

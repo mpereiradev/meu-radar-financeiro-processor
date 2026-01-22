@@ -8,6 +8,9 @@ from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+"""
+# DEPRECATED
+"""
 class DocumentService:
     def __init__(self):
         self.converter = DocumentConverter()

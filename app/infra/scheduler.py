@@ -7,59 +7,66 @@ from typing import List
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.infra.supabase_client import list_files, download_file
-from app.domain.document_service import DocumentService
+from app.infra.supabase_client import list_files, download_file, upload_file, move_file
+from app.domain.invoice_extract_service import InvoiceExtractService
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# State file path using configurable DATA_DIR
-STATE_FILE = settings.DATA_DIR / "state" / "processed_files.json"
-
-def load_processed_files() -> List[str]:
-    if not STATE_FILE.exists():
-        return []
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading state file: {e}")
-        return []
-
-def save_processed_files(processed: List[str]):
-    # Ensure directory exists
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(processed, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving state file: {e}")
-
 def process_new_documents_job():
-    logger.info("Starting scheduled document processing job.")
+    logger.info("Starting scheduled invoice processing job.")
     
-    document_service = DocumentService()
-    processed_files = load_processed_files()
-    
+    invoice_service = InvoiceExtractService()
+    invoice_prefix = "invoices"
+
     try:
-        # List all files from Supabase bucket
-        storage_files = list_files()
+        # 1. List files from Supabase bucket in 'invoice' folder
+        # Note: We filter for files in 'invoices/' folder.
+        # list_files returns paths relative to bucket root internally, e.g. "invoices/file.pdf"
+        storage_files = list_files(prefix=invoice_prefix)
         
-        new_files = [f for f in storage_files if f not in processed_files]
+        # Filter only PDFs just in case, and ignore "invoices/" placeholder if present
+        new_files = [f for f in storage_files if f.lower().endswith(".pdf") and f != "invoices/"]
         
         if not new_files:
-            logger.info("No new files to process.")
+            logger.info("No new invoice files to process.")
             return
 
         for filename in new_files:
             try:
-                logger.info(f"Processing file: {filename}")
-                file_bytes = download_file(filename)
+                logger.info(f"Processing invoice file: {filename}")
                 
-                document_service.process_document(file_bytes, filename)
+                # 2. Download file
+                file_bytes = download_file(invoice_prefix + "/" + filename)
                 
-                processed_files.append(filename)
-                save_processed_files(processed_files)
+                # 3. Process using InvoiceExtractService
+                result = invoice_service.process_pdf(file_bytes, filename)
+                
+                # 4. Upload JSON to 'ingestion' bucket in 'invoice' folder
+                # The 'data' key contains the full document payload
+                if "data" in result:
+                    json_data = json.dumps(result["data"], ensure_ascii=False, indent=2)
+                    json_filename = f"{result['document_id']}.json"
+                    upload_path = f"invoices/{json_filename}"
+                    
+                    # Assuming 'ingestion' bucket exists.
+                    upload_file("ingestion", upload_path, json_data, "application/json")
+                    logger.info(f"Uploaded extraction to ingestion/{upload_path}")
+                
+                # 5. Move original file to 'processed' bucket
+                # filename is like "invoices/foo.pdf"
+                # We want to move it to 'processed' bucket, maybe keeping structure or flat?
+                # Requirement: "processed/ bucket". Let's assume flat or exact name.
+                # Let's keep the filename but put it in processed bucket.
+                # If we want to organize by 'invoice' in processed too: f"invoices/{Path(filename).name}"
+                # The requirement says "mover ele para um outro bucket chamado processed/".
+                # Let's just put it in the root of 'processed' or match the name.
+                # To avoid collisions, maybe keep structure. 
+                # Let's just use the full relative path in the new bucket for safety.
+                
+                dest_path = filename # e.g. "invoices/file.pdf"
+                move_file(settings.SUPABASE_STORAGE_BUCKET, filename, "processed", dest_path)
+                logger.info(f"Moved {filename} to processed/{dest_path}")
                 
             except Exception as e:
                 logger.error(f"Failed to process file {filename}: {e}")
@@ -70,8 +77,8 @@ def process_new_documents_job():
 scheduler = BackgroundScheduler()
 
 trigger = CronTrigger(
-    hour=10, 
-    minute=0, 
+    hour="*", 
+    minute="*", 
     timezone=ZoneInfo("America/Sao_Paulo")
 )
 

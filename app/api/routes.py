@@ -2,13 +2,16 @@ import logging
 import time
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.domain.document_service import DocumentService
-from app.domain.document_sanitizer import DocumentSanitizer
+from app.domain.invoice_extract_service import InvoiceExtractService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 document_service = DocumentService()
-document_sanitizer = DocumentSanitizer()
+invoice_extract_service = InvoiceExtractService()
 
+"""
+# DEPRECATED
+"""
 @router.post("/documents/process")
 async def process_document_endpoint(file: UploadFile = File(...)):
     start = time.time()
@@ -21,14 +24,14 @@ async def process_document_endpoint(file: UploadFile = File(...)):
         logger.error(f"API Error processing '{file.filename}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@router.post("/documents/sanitize")
-async def sanitize_document_endpoint():
+@router.post("/documents/process/invoice")
+async def process_document_invoice_endpoint(file: UploadFile = File(...)):
     start = time.time()
     try:
-        document_sanitizer.run()
-        logger.info(f"API /documents/sanitize: sanitized in {time.time() - start:.2f}s")
-        return {"status": "sanitized"}
+        content = await file.read()
+        result = invoice_extract_service.process_pdf(content, file.filename)
+        logger.info(f"API /documents/process/invoice: '{file.filename}' processed in {time.time() - start:.2f}s")
+        return result
     except Exception as e:
-        logger.error(f"API Error sanitizing: {e}")
+        logger.error(f"API Error processing '{file.filename}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
